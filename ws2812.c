@@ -26,7 +26,7 @@
  *
  */
 #define IS_RGBW false
-#define NUM_PIXELS 10
+#define NUM_PIXELS 27
 
 #ifdef PICO_DEFAULT_WS2812_PIN
 #define WS2812_PIN PICO_DEFAULT_WS2812_PIN
@@ -115,7 +115,7 @@ const struct {
     const char *name;
 } pattern_table[] = {
         {pattern_snakes,  "Snakes!"},
-        //{pattern_random,  "Random data"},
+        {pattern_random,  "Random data"},
         {pattern_sparkle, "Sparkles"},
         {pattern_greys,   "Greys"},
 };
