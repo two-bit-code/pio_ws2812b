@@ -1,0 +1,15 @@
+# Build output
+/build/
+
+# Generated PIO headers and helper files
+/generated/
+
+# VS Code local state
+.vscode/*.log
+.vscode/*.tmp
+.vscode/settings.json
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+*.swp
