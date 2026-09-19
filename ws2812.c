@@ -28,6 +28,13 @@
 #define IS_RGBW false
 #define NUM_PIXELS 27
 
+#define BASEMENT_FIRST_PIXEL 0
+#define BASEMENT_PIXEL_COUNT 10
+#define BEDROOM_FIRST_PIXEL 10
+#define BEDROOM_PIXEL_COUNT 6
+#define LAB_FIRST_PIXEL 16
+#define LAB_PIXEL_COUNT 11
+
 #ifdef PICO_DEFAULT_WS2812_PIN
 #define WS2812_PIN PICO_DEFAULT_WS2812_PIN
 #else
@@ -109,15 +116,49 @@ void pattern_greys(PIO pio, uint sm, uint len, uint t) {
     }
 }
 
+void pattern_telephone_alarm(PIO pio, uint sm, uint len, uint t) {
+    const uint telephone_phase = 80;
+    const uint scene_length = 240;
+    uint phase = t % scene_length;
+
+    for (uint pixel = 0; pixel < len; ++pixel) {
+        uint32_t color = 0;
+
+        if (pixel >= BASEMENT_FIRST_PIXEL &&
+            pixel < BASEMENT_FIRST_PIXEL + BASEMENT_PIXEL_COUNT) {
+            // The telephone rings in the basement before the alarm starts.
+            if (phase < telephone_phase && ((phase / 8) % 2)) {
+                color = urgb_u32(0xff, 0x30, 0);
+            }
+        } else if (pixel >= BEDROOM_FIRST_PIXEL &&
+                   pixel < BEDROOM_FIRST_PIXEL + BEDROOM_PIXEL_COUNT) {
+            if (phase >= telephone_phase && ((phase / 10) % 2)) {
+                color = urgb_u32(0xff, 0, 0);
+            } else if (phase >= telephone_phase) {
+                color = urgb_u32(0, 0, 0xff);
+            }
+        } else if (pixel >= LAB_FIRST_PIXEL &&
+                   pixel < LAB_FIRST_PIXEL + LAB_PIXEL_COUNT &&
+                   phase >= telephone_phase) {
+            uint sweep_pixel = LAB_FIRST_PIXEL +
+                               ((phase - telephone_phase) / 4) % LAB_PIXEL_COUNT;
+            color = pixel == sweep_pixel ? urgb_u32(0, 0xff, 0) : urgb_u32(0, 0x20, 0);
+        }
+
+        put_pixel(pio, sm, color);
+    }
+}
+
 typedef void (*pattern)(PIO pio, uint sm, uint len, uint t);
 const struct {
     pattern pat;
     const char *name;
 } pattern_table[] = {
-        {pattern_snakes,  "Snakes!"},
-        {pattern_random,  "Random data"},
-        {pattern_sparkle, "Sparkles"},
-        {pattern_greys,   "Greys"},
+        // {pattern_snakes,  "Snakes!"},
+        // {pattern_random,  "Random data"},
+        // {pattern_sparkle, "Sparkles"},
+        // {pattern_greys,   "Greys"},
+        {pattern_telephone_alarm, "Telephone and alarm"},
 };
 
 static volatile bool button_event;
