@@ -23,7 +23,9 @@
  *  Green, Blue) and use urgb_u32().
  *
  *  When RGBW is used with urgb_u32(), the White channel will be ignored (off).
- *
+ *  Ground Green cable
+ *  ws2812 Blue cable
+ *  VBUS5V Purple Cable
  */
 #define IS_RGBW false
 #define NUM_PIXELS 27
@@ -34,6 +36,8 @@
 #define BEDROOM_PIXEL_COUNT 6
 #define LAB_FIRST_PIXEL 16
 #define LAB_PIXEL_COUNT 11
+#define CONTAINMENT_FIRST_PIXEL 7
+#define CONTAINMENT_PIXEL_COUNT 3
 
 #ifdef PICO_DEFAULT_WS2812_PIN
 #define WS2812_PIN PICO_DEFAULT_WS2812_PIN
@@ -149,6 +153,39 @@ void pattern_telephone_alarm(PIO pio, uint sm, uint len, uint t) {
     }
 }
 
+void pattern_light_is_green(PIO pio, uint sm, uint len, uint t) {
+    const uint warmup_frames = 300;
+    const uint alarm_frames = 300;
+    const uint flash_frames = 10;
+    const uint alarm_end = warmup_frames + alarm_frames;
+    const uint flash_end = alarm_end + flash_frames;
+    uint elapsed = t > 0 ? t : 0;
+
+    for (uint pixel = 0; pixel < len; ++pixel) {
+        uint32_t color = urgb_u32(0xff, 0x80, 0x30);
+
+        if (elapsed >= warmup_frames && elapsed < alarm_end) {
+            color = urgb_u32(0x08, 0x04, 0x02);
+            if (pixel >= CONTAINMENT_FIRST_PIXEL &&
+                pixel < CONTAINMENT_FIRST_PIXEL + CONTAINMENT_PIXEL_COUNT) {
+                color = urgb_u32(0xff, 0, 0);
+            }
+        } else if (elapsed >= alarm_end && elapsed < flash_end) {
+            if (pixel <= 10) {
+                color = urgb_u32(0xff, 0xff, 0xff);
+            } else {
+                color = urgb_u32(0x08, 0x04, 0x02);
+            }
+        } else if (elapsed >= flash_end &&
+                   pixel >= CONTAINMENT_FIRST_PIXEL &&
+                   pixel < CONTAINMENT_FIRST_PIXEL + CONTAINMENT_PIXEL_COUNT) {
+            color = urgb_u32(0, 0xff, 0);
+        }
+
+        put_pixel(pio, sm, color);
+    }
+}
+
 typedef void (*pattern)(PIO pio, uint sm, uint len, uint t);
 const struct {
     pattern pat;
@@ -159,6 +196,7 @@ const struct {
         // {pattern_sparkle, "Sparkles"},
         // {pattern_greys,   "Greys"},
         {pattern_telephone_alarm, "Telephone and alarm"},
+        {pattern_light_is_green, "Light is Green, Trap is Clean"},
 };
 
 static volatile bool button_event;
@@ -195,7 +233,7 @@ int main() {
     int t = 0;
     int pat = rand() % count_of(pattern_table);
     while (1) {
-        int dir = (rand() >> 30) & 1 ? 1 : -1;
+        int dir = 1;
         puts(pattern_table[pat].name);
         puts(dir == 1 ? "(forward)" : "(backward)");
         for (int i = 0; i < 1000; ++i) {
