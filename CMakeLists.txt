@@ -30,6 +30,16 @@ include(pico_sdk_import.cmake)
 
 project(pio_ws2812 C CXX ASM)
 
+include(FetchContent)
+
+FetchContent_Declare(
+    minimp3
+    GIT_REPOSITORY https://github.com/lieff/minimp3.git
+    GIT_TAG master
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(minimp3)
+
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
@@ -39,12 +49,25 @@ add_executable(pio_ws2812)
 
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/generated)
 
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+set(MP3_HEADER ${CMAKE_CURRENT_LIST_DIR}/generated/slow_mp3.h)
+add_custom_command(
+    OUTPUT ${MP3_HEADER}
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/tools/embed_mp3.py
+        ${CMAKE_CURRENT_LIST_DIR}/slow.mp3 ${MP3_HEADER}
+    DEPENDS ${CMAKE_CURRENT_LIST_DIR}/slow.mp3
+        ${CMAKE_CURRENT_LIST_DIR}/tools/embed_mp3.py
+    VERBATIM)
+add_custom_target(embed_mp3 DEPENDS ${MP3_HEADER})
+
 # generate the header file into the source tree as it is included in the RP2040 datasheet
 pico_generate_pio_header(pio_ws2812 ${CMAKE_CURRENT_LIST_DIR}/ws2812.pio OUTPUT_DIR ${CMAKE_CURRENT_LIST_DIR}/generated)
 
-target_sources(pio_ws2812 PRIVATE ws2812.c)
+target_sources(pio_ws2812 PRIVATE ws2812.c ${MP3_HEADER})
+add_dependencies(pio_ws2812 embed_mp3)
 
-target_link_libraries(pio_ws2812 PRIVATE pico_stdlib hardware_pio)
+target_include_directories(pio_ws2812 PRIVATE ${minimp3_SOURCE_DIR})
+target_link_libraries(pio_ws2812 PRIVATE pico_stdlib hardware_pio hardware_pwm pico_multicore)
 pico_enable_stdio_usb(pio_ws2812 1)
 pico_enable_stdio_uart(pio_ws2812 0)
 pico_add_extra_outputs(pio_ws2812)

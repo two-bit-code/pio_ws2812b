@@ -7,10 +7,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "pico/multicore.h"
 #include "pico/stdlib.h"
+#include "hardware/pwm.h"
 #include "hardware/pio.h"
 #include "hardware/clocks.h"
+#define MINIMP3_IMPLEMENTATION
+#include "minimp3.h"
+#include "slow_mp3.h"
 #include "ws2812.pio.h"
+
+#define AUDIO_PIN 0
+#define AUDIO_PWM_TOP 1023
 
 /**
  * NOTE:
@@ -201,6 +209,56 @@ const struct {
 
 static volatile bool button_event;
 
+static void audio_core(void) {
+    mp3dec_t decoder;
+    mp3dec_frame_info_t frame_info;
+    mp3d_sample_t samples[MINIMP3_MAX_SAMPLES_PER_FRAME];
+    mp3dec_init(&decoder);
+
+    uint pwm_slice = pwm_gpio_to_slice_num(AUDIO_PIN);
+    pwm_config pwm = pwm_get_default_config();
+    pwm_config_set_clkdiv(&pwm, 1.0f);
+    pwm_config_set_wrap(&pwm, AUDIO_PWM_TOP);
+    pwm_init(pwm_slice, &pwm, false);
+    gpio_set_function(AUDIO_PIN, GPIO_FUNC_PWM);
+    pwm_set_gpio_level(AUDIO_PIN, AUDIO_PWM_TOP / 2);
+    pwm_set_enabled(pwm_slice, true);
+
+    const uint8_t *encoded = slow_mp3_data;
+    size_t remaining = slow_mp3_size;
+    absolute_time_t next_sample = get_absolute_time();
+
+    while (remaining > 0) {
+        int sample_count = mp3dec_decode_frame(&decoder, encoded, (int)remaining,
+                                               samples, &frame_info);
+        if (frame_info.frame_bytes <= 0 || frame_info.frame_bytes > (int)remaining) {
+            break;
+        }
+        encoded += frame_info.frame_bytes;
+        remaining -= (size_t)frame_info.frame_bytes;
+
+        if (sample_count <= 0 || frame_info.hz <= 0) {
+            continue;
+        }
+
+        int channels = frame_info.channels > 0 ? frame_info.channels : 1;
+        for (int sample = 0; sample < sample_count * channels; sample += channels) {
+            int32_t mono = samples[sample];
+            if (channels > 1) {
+                mono = (mono + samples[sample + 1]) / 2;
+            }
+            uint16_t level = (uint16_t)(((mono + 32768) * AUDIO_PWM_TOP) / 65535);
+            pwm_set_gpio_level(AUDIO_PIN, level);
+            next_sample = delayed_by_us(next_sample, 1000000 / frame_info.hz);
+            busy_wait_until(next_sample);
+        }
+    }
+
+    pwm_set_gpio_level(AUDIO_PIN, AUDIO_PWM_TOP / 2);
+    pwm_set_enabled(pwm_slice, false);
+    puts("MP3 playback complete");
+}
+
 static void button_callback(uint gpio, uint32_t events) {
     if (gpio == BUTTON_PIN && (events & GPIO_IRQ_EDGE_FALL)) {
         button_event = true;
@@ -216,6 +274,8 @@ int main() {
     gpio_set_dir(BUTTON_PIN, GPIO_IN);
     gpio_pull_up(BUTTON_PIN);
     gpio_set_irq_enabled_with_callback(BUTTON_PIN, GPIO_IRQ_EDGE_FALL, true, &button_callback);
+
+    multicore_launch_core1(audio_core);
 
     // todo get free sm
     PIO pio;
