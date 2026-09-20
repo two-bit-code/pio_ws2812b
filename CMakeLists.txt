@@ -67,6 +67,7 @@ target_sources(pio_ws2812 PRIVATE ws2812.c ${MP3_HEADER})
 add_dependencies(pio_ws2812 embed_mp3)
 
 target_link_libraries(pio_ws2812 PRIVATE pico_stdlib hardware_pio hardware_pwm pico_multicore helixmp3)
+target_compile_options(pio_ws2812 PRIVATE -O3)
 pico_enable_stdio_usb(pio_ws2812 1)
 pico_enable_stdio_uart(pio_ws2812 0)
 pico_add_extra_outputs(pio_ws2812)

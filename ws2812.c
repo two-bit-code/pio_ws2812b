@@ -3,7 +3,6 @@
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
-
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -18,6 +17,7 @@
 
 #define AUDIO_PIN 0
 #define AUDIO_PWM_TOP 1023
+#define AUDIO_BUFFER_SAMPLES 8192
 
 /**
  * NOTE:
@@ -209,6 +209,28 @@ const struct {
 static volatile bool button_event;
 
 static short audio_pcm[MAX_NGRAN * MAX_NSAMP * MAX_NCHAN];
+static int16_t audio_buffer[AUDIO_BUFFER_SAMPLES];
+static volatile uint audio_read_index;
+static volatile uint audio_write_index;
+static volatile bool audio_done;
+
+static bool audio_timer_callback(repeating_timer_t *timer) {
+    (void)timer;
+    uint read_index = audio_read_index;
+    uint write_index = audio_write_index;
+    int16_t sample = 0;
+
+    if (read_index != write_index) {
+        sample = audio_buffer[read_index];
+        audio_read_index = (read_index + 1) % AUDIO_BUFFER_SAMPLES;
+    } else if (audio_done) {
+        return false;
+    }
+
+    uint16_t level = (uint16_t)(((int32_t)sample + 32768) * AUDIO_PWM_TOP / 65535);
+    pwm_set_gpio_level(AUDIO_PIN, level);
+    return true;
+}
 
 static void audio_core(void) {
     HMP3Decoder decoder = MP3InitDecoder();
@@ -237,9 +259,25 @@ static void audio_core(void) {
     }
     encoded += sync_offset;
     remaining -= sync_offset;
-    absolute_time_t next_sample = get_absolute_time();
+
+    if (MP3GetNextFrameInfo(decoder, &frame_info, encoded) != ERR_MP3_NONE ||
+        frame_info.samprate <= 0) {
+        puts("MP3 frame info unavailable");
+        MP3FreeDecoder(decoder);
+        return;
+    }
+
+    repeating_timer_t audio_timer;
+    add_repeating_timer_us(-1000000 / frame_info.samprate, audio_timer_callback,
+                           NULL, &audio_timer);
 
     while (remaining > 0) {
+        uint next_write_index = (audio_write_index + 1) % AUDIO_BUFFER_SAMPLES;
+        if (next_write_index == audio_read_index) {
+            tight_loop_contents();
+            continue;
+        }
+
         int result = MP3Decode(decoder, &encoded, &remaining, audio_pcm, 0);
         if (result != ERR_MP3_NONE) {
             printf("MP3 decode error: %d\n", result);
@@ -253,13 +291,19 @@ static void audio_core(void) {
             if (channels > 1) {
                 mono = (mono + audio_pcm[sample + 1]) / 2;
             }
-            uint16_t level = (uint16_t)(((mono + 32768) * AUDIO_PWM_TOP) / 65535);
-            pwm_set_gpio_level(AUDIO_PIN, level);
-            next_sample = delayed_by_us(next_sample, 1000000 / frame_info.samprate);
-            busy_wait_until(next_sample);
+            while (((audio_write_index + 1) % AUDIO_BUFFER_SAMPLES) == audio_read_index) {
+                tight_loop_contents();
+            }
+            audio_buffer[audio_write_index] = (int16_t)mono;
+            audio_write_index = (audio_write_index + 1) % AUDIO_BUFFER_SAMPLES;
         }
     }
 
+    while (audio_read_index != audio_write_index) {
+        tight_loop_contents();
+    }
+    audio_done = true;
+    cancel_repeating_timer(&audio_timer);
     pwm_set_gpio_level(AUDIO_PIN, AUDIO_PWM_TOP / 2);
     pwm_set_enabled(pwm_slice, false);
     MP3FreeDecoder(decoder);
