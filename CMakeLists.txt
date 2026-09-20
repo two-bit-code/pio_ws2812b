@@ -33,12 +33,12 @@ project(pio_ws2812 C CXX ASM)
 include(FetchContent)
 
 FetchContent_Declare(
-    minimp3
-    GIT_REPOSITORY https://github.com/lieff/minimp3.git
-    GIT_TAG master
+    helixmp3
+    GIT_REPOSITORY https://github.com/MrJake222/libhelix-mp3.git
+    GIT_TAG impr
     GIT_SHALLOW TRUE
 )
-FetchContent_MakeAvailable(minimp3)
+FetchContent_MakeAvailable(helixmp3)
 
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
@@ -66,8 +66,7 @@ pico_generate_pio_header(pio_ws2812 ${CMAKE_CURRENT_LIST_DIR}/ws2812.pio OUTPUT_
 target_sources(pio_ws2812 PRIVATE ws2812.c ${MP3_HEADER})
 add_dependencies(pio_ws2812 embed_mp3)
 
-target_include_directories(pio_ws2812 PRIVATE ${minimp3_SOURCE_DIR})
-target_link_libraries(pio_ws2812 PRIVATE pico_stdlib hardware_pio hardware_pwm pico_multicore)
+target_link_libraries(pio_ws2812 PRIVATE pico_stdlib hardware_pio hardware_pwm pico_multicore helixmp3)
 pico_enable_stdio_usb(pio_ws2812 1)
 pico_enable_stdio_uart(pio_ws2812 0)
 pico_add_extra_outputs(pio_ws2812)

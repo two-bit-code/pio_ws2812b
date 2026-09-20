@@ -12,8 +12,7 @@
 #include "hardware/pwm.h"
 #include "hardware/pio.h"
 #include "hardware/clocks.h"
-#define MINIMP3_IMPLEMENTATION
-#include "minimp3.h"
+#include "mp3dec.h"
 #include "slow_mp3.h"
 #include "ws2812.pio.h"
 
@@ -209,11 +208,15 @@ const struct {
 
 static volatile bool button_event;
 
+static short audio_pcm[MAX_NGRAN * MAX_NSAMP * MAX_NCHAN];
+
 static void audio_core(void) {
-    mp3dec_t decoder;
-    mp3dec_frame_info_t frame_info;
-    mp3d_sample_t samples[MINIMP3_MAX_SAMPLES_PER_FRAME];
-    mp3dec_init(&decoder);
+    HMP3Decoder decoder = MP3InitDecoder();
+    MP3FrameInfo frame_info;
+    if (!decoder) {
+        puts("MP3 decoder allocation failed");
+        return;
+    }
 
     uint pwm_slice = pwm_gpio_to_slice_num(AUDIO_PIN);
     pwm_config pwm = pwm_get_default_config();
@@ -224,38 +227,42 @@ static void audio_core(void) {
     pwm_set_gpio_level(AUDIO_PIN, AUDIO_PWM_TOP / 2);
     pwm_set_enabled(pwm_slice, true);
 
-    const uint8_t *encoded = slow_mp3_data;
-    size_t remaining = slow_mp3_size;
+    unsigned char *encoded = (unsigned char *)(uintptr_t)slow_mp3_data;
+    int remaining = (int)slow_mp3_size;
+    int sync_offset = MP3FindSyncWord(encoded, remaining);
+    if (sync_offset < 0) {
+        puts("MP3 sync word not found");
+        MP3FreeDecoder(decoder);
+        return;
+    }
+    encoded += sync_offset;
+    remaining -= sync_offset;
     absolute_time_t next_sample = get_absolute_time();
 
     while (remaining > 0) {
-        int sample_count = mp3dec_decode_frame(&decoder, encoded, (int)remaining,
-                                               samples, &frame_info);
-        if (frame_info.frame_bytes <= 0 || frame_info.frame_bytes > (int)remaining) {
+        int result = MP3Decode(decoder, &encoded, &remaining, audio_pcm, 0);
+        if (result != ERR_MP3_NONE) {
+            printf("MP3 decode error: %d\n", result);
             break;
         }
-        encoded += frame_info.frame_bytes;
-        remaining -= (size_t)frame_info.frame_bytes;
+        MP3GetLastFrameInfo(decoder, &frame_info);
 
-        if (sample_count <= 0 || frame_info.hz <= 0) {
-            continue;
-        }
-
-        int channels = frame_info.channels > 0 ? frame_info.channels : 1;
-        for (int sample = 0; sample < sample_count * channels; sample += channels) {
-            int32_t mono = samples[sample];
+        int channels = frame_info.nChans > 0 ? frame_info.nChans : 1;
+        for (int sample = 0; sample < frame_info.outputSamps; sample += channels) {
+            int32_t mono = audio_pcm[sample];
             if (channels > 1) {
-                mono = (mono + samples[sample + 1]) / 2;
+                mono = (mono + audio_pcm[sample + 1]) / 2;
             }
             uint16_t level = (uint16_t)(((mono + 32768) * AUDIO_PWM_TOP) / 65535);
             pwm_set_gpio_level(AUDIO_PIN, level);
-            next_sample = delayed_by_us(next_sample, 1000000 / frame_info.hz);
+            next_sample = delayed_by_us(next_sample, 1000000 / frame_info.samprate);
             busy_wait_until(next_sample);
         }
     }
 
     pwm_set_gpio_level(AUDIO_PIN, AUDIO_PWM_TOP / 2);
     pwm_set_enabled(pwm_slice, false);
+    MP3FreeDecoder(decoder);
     puts("MP3 playback complete");
 }
 
